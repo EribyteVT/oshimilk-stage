@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Oshi Milk 🥛</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Outfit:wght@300;400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link href="./index.css" rel="stylesheet" />
+  </head>
+  <body>
+    <header>
+      <h1>OSHI MILK</h1>
+      <p>Virtual Lactation Agency</p>
+    </header>
+
+    <!-- LIVE section, hidden unless used -->
+    <div class="live-section" id="liveSection">
+      <div class="live-header">
+        <div class="live-badge"><span class="live-dot"></span> LIVE NOW</div>
+        <div class="live-subtitle">Currently Live</div>
+      </div>
+      <div class="live-streams" id="liveStreams"></div>
+    </div>
+
+    <div class="talent-grid" id="talentGrid"></div>
+
+    <footer>
+      <p>&copy; 2026 Oshi Milk</p>
+    </footer>
+    <script src="talents.js"></script>
+    <script>
+      // === SHUFFLE ===
+      function shuffle(arr) {
+        const a = [...arr];
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      }
+
+      const ytCache = {};
+
+      async function fetchLatestVideo(handle) {
+        if (!handle) return null;
+        if (ytCache[handle]) return ytCache[handle];
+
+        try {
+          const res = await fetch(
+            `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}&no_shorts=1&min_duration=180`,
+          );
+          const text = (await res.text()).trim();
+
+          // DecAPI returns a YouTube URL if successful, or an error message
+          const match = text.match(
+            /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+          );
+          if (!match) return fetchLatestShort(handle);
+
+          const result = { videoId: match[1], url: text };
+          ytCache[handle] = result;
+          return result;
+        } catch (e) {
+          console.warn("DecAPI YouTube fetch failed for", handle, e);
+          return null;
+        }
+      }
+
+      async function fetchLatestShort(handle) {
+        if (!handle) return null;
+        if (ytCache[handle]) return ytCache[handle];
+
+        try {
+          const res = await fetch(
+            `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}`,
+          );
+          const text = (await res.text()).trim();
+
+          // DecAPI returns a YouTube URL if successful, or an error message
+          const match = text.match(
+            /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+          );
+          if (!match) return null;
+
+          const result = { videoId: match[1], url: text };
+          ytCache[handle] = result;
+          return result;
+        } catch (e) {
+          console.warn("DecAPI YouTube fetch failed for", handle, e);
+          return null;
+        }
+      }
+
+      function getYoutubeUrl(talent) {
+        const yt = talent.socials.find(
+          (s) => s.icon.includes("fa-youtube") && s.label !== "VODs",
+        );
+        return yt ? yt.url : null;
+      }
+
+      function buildYtFallback(talent) {
+        const ytUrl = getYoutubeUrl(talent);
+        if (!ytUrl) return "";
+        return `
+          <div class="detail-yt-fallback">
+            <a href="${ytUrl}" target="_blank" rel="noopener">
+              <i class="fa-brands fa-youtube"></i> Visit ${talent.name} on YouTube
+            </a>
+          </div>
+        `;
+      }
+
+      let detailPanel = null;
+      let currentTalent = null;
+      let currentCard = null;
+      let isAnimating = false;
+
+      function createDetailPanel() {
+        detailPanel = document.createElement("div");
+        detailPanel.className = "detail-panel";
+        detailPanel.innerHTML = `
+          <div class="detail-panel-overflow">
+            <button class="detail-close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+            <div class="detail-panel-inner">
+              <div class="detail-bio">
+                <div class="detail-label">About</div>
+                <div class="detail-bio-content"></div>
+              </div>
+              <div class="detail-yt">
+                <div class="detail-label">Latest Video</div>
+                <div class="detail-yt-content"></div>
+              </div>
+            </div>
+          </div>
+        `;
+
+        detailPanel
+          .querySelector(".detail-close")
+          .addEventListener("click", (e) => {
+            e.stopPropagation();
+            closePanel();
+          });
+      }
+
+      async function openPanel(card, talent) {
+        const grid = document.getElementById("talentGrid");
+        const cards = Array.from(grid.querySelectorAll(".talent-card"));
+        const cardIndex = cards.indexOf(card);
+
+        // Determine columns (2 on desktop, 1 on mobile)
+        const gridStyle = getComputedStyle(grid);
+        const cols = gridStyle.gridTemplateColumns.split(" ").length;
+
+        // Find the last card in this row
+        const rowEnd = Math.min(
+          cardIndex + (cols - 1 - (cardIndex % cols)),
+          cards.length - 1,
+        );
+        const insertAfter = cards[rowEnd];
+
+        detailPanel.style.setProperty("--accent", talent.accent);
+
+        const bioContent = detailPanel.querySelector(".detail-bio-content");
+        bioContent.innerHTML = talent.bio
+          ? `<div class="detail-bio-text">${talent.bio}</div>`
+          : `<div class="detail-no-bio">Bio coming soon…</div>`;
+
+        const ytContent = detailPanel.querySelector(".detail-yt-content");
+        ytContent.innerHTML = "";
+
+        insertAfter.insertAdjacentElement("afterend", detailPanel);
+
+        // Animate open — double rAF ensures the browser has painted 0fr before transitioning to 1fr
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            detailPanel.classList.add("open");
+          });
+        });
+
+        // Highlight the card
+        card.classList.add("selected");
+        currentCard = card;
+        currentTalent = talent;
+
+        // Smooth scroll
+        setTimeout(() => {
+          detailPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 200);
+
+        // === YOUTUBE LATEST VIDEO ===
+        if (talent.youtubeHandle) {
+          ytContent.innerHTML =
+            '<div class="detail-yt-loading">Loading latest video…</div>';
+          const video = await fetchLatestVideo(talent.youtubeHandle);
+          if (video && currentTalent === talent) {
+            ytContent.innerHTML = `
+              <div class="detail-yt-player">
+                <iframe
+                  src="https://www.youtube.com/embed/${video.videoId}"
+                  allowfullscreen
+                  allow="autoplay; encrypted-media"
+                ></iframe>
+              </div>
+            `;
+          } else if (currentTalent === talent) {
+            ytContent.innerHTML = buildYtFallback(talent);
+          }
+        } else {
+          ytContent.innerHTML = buildYtFallback(talent);
+        }
+      }
+
+      function closePanel(callback) {
+        if (!detailPanel || !detailPanel.parentNode) {
+          if (callback) callback();
+          return;
+        }
+
+        isAnimating = true; // LOCK
+        detailPanel.classList.remove("open");
+
+        if (currentCard) {
+          currentCard.classList.remove("selected");
+          currentCard = null;
+        }
+
+        let called = false; // GUARD against double-fire
+        const onEnd = () => {
+          if (called) return;
+          called = true;
+          detailPanel.removeEventListener("transitionend", onEnd);
+          if (detailPanel.parentNode)
+            detailPanel.parentNode.removeChild(detailPanel);
+          const ytContent = detailPanel.querySelector(".detail-yt-content");
+          if (ytContent) ytContent.innerHTML = "";
+          currentTalent = null;
+          isAnimating = false; // UNLOCK
+          if (callback) callback();
+        };
+
+        detailPanel.addEventListener("transitionend", onEnd);
+        setTimeout(onEnd, 600); // fallback
+      }
+
+      function handleCardClick(card, talent) {
+        if (isAnimating) return; // BLOCK during animation
+
+        if (currentCard === card) {
+          closePanel();
+          return;
+        }
+
+        if (currentCard) {
+          closePanel(() => openPanel(card, talent));
+        } else {
+          openPanel(card, talent);
+        }
+      }
+
+      // === BUILD TALENT GRID ===
+      function buildGrid() {
+        const grid = document.getElementById("talentGrid");
+        const shuffled = shuffle(talents);
+
+        createDetailPanel();
+
+        shuffled.forEach((t, i) => {
+          const card = document.createElement("section");
+          card.className = "talent-card";
+          card.style.setProperty("--accent", t.accent);
+          card.dataset.name = t.name;
+
+          const floatDelay = (Math.random() * -5).toFixed(2);
+
+          const socialsHTML = t.socials
+            .map(
+              (s) =>
+                `<a href="${s.url}" data-label="${s.label}" target="_blank" rel="noopener"><i class="${s.icon}"></i></a>`,
+            )
+            .join("");
+
+          const imageHTML = t.image
+            ? `<img src="${t.image}" alt="${t.name}" style="animation-delay:${floatDelay}s"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+               <div class="placeholder" style="display:none">Image not found</div>`
+            : `<div class="placeholder">Awaiting<br/>Debut</div>`;
+
+          card.innerHTML = `
+            <div class="talent-image-wrap">
+              ${imageHTML}
+            </div>
+            <div class="talent-name">${t.name}</div>
+            <div class="talent-tagline">${t.tagline}</div>
+            <div class="socials">${socialsHTML}</div>
+          `;
+
+          card.addEventListener("click", (e) => {
+            if (e.target.closest("a") || e.target.closest("iframe")) return;
+            handleCardClick(card, t);
+          });
+
+          grid.appendChild(card);
+        });
+      }
+
+      // === LIVE DETECTION ===
+      async function checkIfLive(channel) {
+        try {
+          const res = await fetch(`https://decapi.me/twitch/uptime/${channel}`);
+          const text = await res.text();
+          return !text.toLowerCase().includes("offline");
+        } catch (e) {
+          return false;
+        }
+      }
+
+      async function initLiveDetection() {
+        const liveSection = document.getElementById("liveSection");
+        const liveStreams = document.getElementById("liveStreams");
+        const parentDomain = window.location.hostname || "localhost";
+
+        const twitchTalents = talents.filter((t) => t.twitchChannel);
+        if (!twitchTalents.length) return;
+
+        const results = await Promise.all(
+          twitchTalents.map(async (t) => ({
+            talent: t,
+            isLive: await checkIfLive(t.twitchChannel),
+          })),
+        );
+
+        const liveTalents = results.filter((r) => r.isLive);
+        if (liveTalents.length === 0) return;
+
+        liveSection.classList.add("visible");
+
+        liveTalents.forEach(({ talent }, i) => {
+          const card = document.createElement("div");
+          card.className = "live-stream-card";
+          card.style.animationDelay = `${i * 0.15}s`;
+
+          card.innerHTML = `
+            <iframe
+              class="live-stream-embed"
+              src="https://player.twitch.tv/?channel=${talent.twitchChannel}&parent=${parentDomain}&muted=true&autoplay=true"
+              allowfullscreen
+            ></iframe>
+            <div class="live-stream-info">
+              <div class="live-stream-name" style="color:${talent.accent}">${talent.name}</div>
+              <div class="live-stream-label">
+                <span class="live-dot"></span> LIVE
+              </div>
+            </div>
+          `;
+
+          liveStreams.appendChild(card);
+
+          const gridCard = document.querySelector(
+            `.talent-card[data-name="${talent.name}"] .talent-name`,
+          );
+          if (gridCard && !gridCard.querySelector(".grid-live-dot")) {
+            const dot = document.createElement("span");
+            dot.className = "grid-live-dot";
+            gridCard.appendChild(dot);
+          }
+        });
+      }
+
+      // Go
+      buildGrid();
+      initLiveDetection();
+    </script>
+  </body>
+</html>
