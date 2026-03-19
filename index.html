@@ -83,7 +83,20 @@
               /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
             );
             if (!match_short) return null;
-            return { videoId: match_short[1], url: text_short };
+
+            const videoId = match_short[1];
+
+            const oembedRes = await fetch(
+              `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+            );
+
+            const oembedData = await oembedRes.json();
+
+            return {
+              videoId,
+              url: text_short,
+              title: oembedData.title ?? null,
+            };
           } catch (e) {
             console.warn("DecAPI YouTube fetch failed for", handle, e);
             return null;
