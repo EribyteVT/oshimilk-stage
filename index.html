@@ -50,52 +50,47 @@
 
       async function fetchLatestVideo(handle) {
         if (!handle) return null;
-        if (ytCache[handle]) return ytCache[handle];
+        if (ytCache[handle]) return ytCache[handle]; // returns promise if still in-flight, or resolved value
 
-        try {
-          const res = await fetch(
-            `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}&no_shorts=1&min_duration=180`,
-          );
-          const text = (await res.text()).trim();
+        ytCache[handle] = (async () => {
+          try {
+            const res = await fetch(
+              `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}&no_shorts=1&min_duration=180`,
+            );
+            const text = (await res.text()).trim();
+            const match = text.match(
+              /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+            );
+            if (match) {
+              const videoId = match[1];
 
-          // DecAPI returns a YouTube URL if successful, or an error message
-          const match = text.match(
-            /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
-          );
-          if (!match) return fetchLatestShort(handle);
+              const oembedRes = await fetch(
+                `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+              );
 
-          const result = { videoId: match[1], url: text };
-          ytCache[handle] = result;
-          return result;
-        } catch (e) {
-          console.warn("DecAPI YouTube fetch failed for", handle, e);
-          return null;
-        }
-      }
+              const oembedData = await oembedRes.json();
 
-      async function fetchLatestShort(handle) {
-        if (!handle) return null;
-        if (ytCache[handle]) return ytCache[handle];
+              return { videoId, url: text, title: oembedData.title ?? null };
+            }
+            const res_short = await fetch(
+              `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}`,
+            );
+            console.log(
+              `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}`,
+            );
+            const text_short = (await res_short.text()).trim();
+            const match_short = text_short.match(
+              /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+            );
+            if (!match_short) return null;
+            return { videoId: match_short[1], url: text_short };
+          } catch (e) {
+            console.warn("DecAPI YouTube fetch failed for", handle, e);
+            return null;
+          }
+        })();
 
-        try {
-          const res = await fetch(
-            `https://decapi.me/youtube/latest_video?id=${encodeURIComponent(handle)}`,
-          );
-          const text = (await res.text()).trim();
-
-          // DecAPI returns a YouTube URL if successful, or an error message
-          const match = text.match(
-            /(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
-          );
-          if (!match) return null;
-
-          const result = { videoId: match[1], url: text };
-          ytCache[handle] = result;
-          return result;
-        } catch (e) {
-          console.warn("DecAPI YouTube fetch failed for", handle, e);
-          return null;
-        }
+        return ytCache[handle];
       }
 
       function getYoutubeUrl(talent) {
@@ -109,12 +104,12 @@
         const ytUrl = getYoutubeUrl(talent);
         if (!ytUrl) return "";
         return `
-          <div class="detail-yt-fallback">
-            <a href="${ytUrl}" target="_blank" rel="noopener">
-              <i class="fa-brands fa-youtube"></i> Visit ${talent.name} on YouTube
-            </a>
-          </div>
-        `;
+              <div class="detail-yt-fallback">
+                <a href="${ytUrl}" target="_blank" rel="noopener">
+                  <i class="fa-brands fa-youtube"></i> Visit ${talent.name} on YouTube
+                </a>
+              </div>
+            `;
       }
 
       let detailPanel = null;
@@ -126,20 +121,20 @@
         detailPanel = document.createElement("div");
         detailPanel.className = "detail-panel";
         detailPanel.innerHTML = `
-          <div class="detail-panel-overflow">
-            <button class="detail-close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
-            <div class="detail-panel-inner">
-              <div class="detail-bio">
-                <div class="detail-label">About</div>
-                <div class="detail-bio-content"></div>
+              <div class="detail-panel-overflow">
+                <button class="detail-close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+                <div class="detail-panel-inner">
+                  <div class="detail-bio">
+                    <div class="detail-label">About</div>
+                    <div class="detail-bio-content"></div>
+                  </div>
+                  <div class="detail-yt">
+                    <div class="detail-label">Latest Video</div>
+                    <div class="detail-yt-content"></div>
+                  </div>
+                </div>
               </div>
-              <div class="detail-yt">
-                <div class="detail-label">Latest Video</div>
-                <div class="detail-yt-content"></div>
-              </div>
-            </div>
-          </div>
-        `;
+            `;
 
         detailPanel
           .querySelector(".detail-close")
@@ -200,15 +195,20 @@
             '<div class="detail-yt-loading">Loading latest video…</div>';
           const video = await fetchLatestVideo(talent.youtubeHandle);
           if (video && currentTalent === talent) {
-            ytContent.innerHTML = `
-              <div class="detail-yt-player">
-                <iframe
-                  src="https://www.youtube.com/embed/${video.videoId}"
-                  allowfullscreen
-                  allow="autoplay; encrypted-media"
-                ></iframe>
-              </div>
-            `;
+            ytContent.innerHTML = buildYtPlayer(video.videoId, video.title);
+
+            ytContent
+              .querySelector(".yt-facade")
+              .addEventListener("click", function () {
+                const id = this.dataset.videoid;
+                this.innerHTML = `
+                  <iframe
+                    src="https://www.youtube.com/embed/${id}?autoplay=1"
+                    allowfullscreen
+                    allow="autoplay; encrypted-media"
+                  ></iframe>
+                `;
+              });
           } else if (currentTalent === talent) {
             ytContent.innerHTML = buildYtFallback(talent);
           }
@@ -288,18 +288,18 @@
 
           const imageHTML = t.image
             ? `<img src="${t.image}" alt="${t.name}" style="animation-delay:${floatDelay}s"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
-               <div class="placeholder" style="display:none">Image not found</div>`
+                     onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+                   <div class="placeholder" style="display:none">Image not found</div>`
             : `<div class="placeholder">Awaiting<br/>Debut</div>`;
 
           card.innerHTML = `
-            <div class="talent-image-wrap">
-              ${imageHTML}
-            </div>
-            <div class="talent-name">${t.name}</div>
-            <div class="talent-tagline">${t.tagline}</div>
-            <div class="socials">${socialsHTML}</div>
-          `;
+                <div class="talent-image-wrap">
+                  ${imageHTML}
+                </div>
+                <div class="talent-name">${t.name}</div>
+                <div class="talent-tagline">${t.tagline}</div>
+                <div class="socials">${socialsHTML}</div>
+              `;
 
           card.addEventListener("click", (e) => {
             if (e.target.closest("a") || e.target.closest("iframe")) return;
@@ -347,18 +347,18 @@
           card.style.animationDelay = `${i * 0.15}s`;
 
           card.innerHTML = `
-            <iframe
-              class="live-stream-embed"
-              src="https://player.twitch.tv/?channel=${talent.twitchChannel}&parent=${parentDomain}&muted=true&autoplay=true"
-              allowfullscreen
-            ></iframe>
-            <div class="live-stream-info">
-              <div class="live-stream-name" style="color:${talent.accent}">${talent.name}</div>
-              <div class="live-stream-label">
-                <span class="live-dot"></span> LIVE
-              </div>
-            </div>
-          `;
+                <iframe
+                  class="live-stream-embed"
+                  src="https://player.twitch.tv/?channel=${talent.twitchChannel}&parent=${parentDomain}&muted=true&autoplay=true"
+                  allowfullscreen
+                ></iframe>
+                <div class="live-stream-info">
+                  <div class="live-stream-name" style="color:${talent.accent}">${talent.name}</div>
+                  <div class="live-stream-label">
+                    <span class="live-dot"></span> LIVE
+                  </div>
+                </div>
+              `;
 
           liveStreams.appendChild(card);
 
@@ -373,7 +373,48 @@
         });
       }
 
+      // === YOUTUBE PRELOAD TO PREVENT WAIT ===
+      function prefetchYouTube() {
+        talents
+          .filter((t) => t.youtubeHandle)
+          .forEach((t) => fetchLatestVideo(t.youtubeHandle));
+      }
+
+      function buildYtPlayer(videoId, title) {
+        return `
+        <div class="detail-yt-player yt-facade" data-videoid="${videoId}">
+          <img 
+            src="https://i.ytimg.com/vi/${videoId}/mqdefault.jpg"
+            alt="Latest video thumbnail"
+            loading="eager"
+          />
+          <button class="yt-play-btn" aria-label="Play video">
+            <i class="fa-solid fa-play"></i>
+          </button>
+          ${title ? `<div class="yt-title"><span class="yt-title-inner">${title}</span></div>` : ""}
+        </div>
+      `;
+      }
+
+      function updateTitleGradient(ytContent) {
+        const facade = ytContent.querySelector(".yt-facade");
+        const titleEl = ytContent.querySelector(".yt-title");
+        const innerEl = ytContent.querySelector(".yt-title-inner");
+        if (!facade || !titleEl || !innerEl) return;
+
+        // If text wraps, it'll be wider than container — cap at 100%
+        const ratio = Math.min(innerEl.offsetWidth / facade.offsetWidth, 1);
+        const solidPct = Math.round(ratio * 100);
+        const fadePct = Math.min(solidPct + 20, 100);
+
+        titleEl.style.background = `linear-gradient(90deg,
+    rgba(0,0,0,0.9) ${solidPct}%,
+    rgba(0,0,0,0.4) ${solidPct + Math.round((fadePct - solidPct) * 0.5)}%,
+    transparent ${fadePct}%)`;
+      }
+
       // Go
+      prefetchYouTube();
       buildGrid();
       initLiveDetection();
     </script>
